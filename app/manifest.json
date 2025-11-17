@@ -1,0 +1,16 @@
+{
+  "name": "SayWorks Recorder",
+  "short_name": "Recorder",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#202b42",
+  "theme_color": "#202b42",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./images/jimny_DIA.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    }
+  ]
+}
