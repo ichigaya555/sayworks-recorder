@@ -1,12 +1,17 @@
-const CACHE_NAME = 'sayworks-recorder-v4';
+// キャッシュのバージョン名（中身を変えたら v2, v3… と増やす）
+const CACHE_NAME = 'sayworks-recorder-v5';
 
+// オフラインで使えるようにキャッシュするファイル一覧
+// !!! 実際に存在するファイルだけを書くこと !!!
+// （存在しないパスがあると install でコケます）
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/css/common.css',
-  '/css/style.css',
-  '/images/jimny_DIA.jpg'
+  './',
+  './index.html',
+//  './index.js',
+  './manifest.json',
+  './images/jimny_DIA.jpg',
+  './css/common.css',
+  './css/style.css'
 ];
 
 self.addEventListener('install', (event) => {
