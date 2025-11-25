@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>録音データ一覧 - SayWorks Recorder</title>
+
+<body>
+<h2>録音データ一覧</h2>
+
+<button id="refreshFilesBtn">一覧を更新</button>
+<div id="filesList">読み込み待ち</div>
+
+<script>
+async function refreshFileList() {
+  const filesList = document.getElementById('filesList');
+  filesList.textContent = '読み込み中…';
+
+  try {
+    const res = await fetch('/api/files');
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+
+    if (!j.sessions.length) {
+      filesList.textContent = '保存された録音はまだありません。';
+      return;
+    }
+
+    // テーブルを生成
+    let html = `
+      <table border="1" cellspacing="0" cellpadding="6">
+        <thead>
+          <tr>
+            <th>セッションID</th>
+            <th>ファイル名</th>
+            <th>サイズ</th>
+            <th>ダウンロード</th>
+          </tr>
+        </thead><tbody>
+    `;
+
+    for (const s of j.sessions) {
+      for (const f of s.finals) {
+        const sizeKB = Math.round(f.bytes / 102.4) / 10;
+        html += `
+          <tr>
+            <td>${s.sessionId}</td>
+            <td>${f.name}</td>
+            <td>${sizeKB} KB</td>
+            <td><a href="${f.url}" download>保存</a></td>
+          </tr>
+        `;
+      }
+    }
+
+    html += '</tbody></table>';
+    filesList.innerHTML = html;
+
+  } catch (e) {
+    filesList.textContent = '一覧取得エラー: ' + (e.message || e);
+  }
+}
+
+document.getElementById('refreshFilesBtn')
+  .addEventListener('click', refreshFileList);
+
+// 最初の1回読み込み
+refreshFileList();
+</script>
+</body>
+</html>

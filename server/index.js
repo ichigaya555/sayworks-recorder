@@ -41,6 +41,58 @@ app.post("/api/upload", async (req, res) => {
   }
 });
 
+// アップロード関連の定義のあとあたりに追加
+app.use("/storage", express.static(STORAGE_DIR, { index: false }));
+
+// ===== 録音ファイル一覧を返すAPI =====
+app.get("/api/files", async (req, res) => {
+  try {
+    const sessions = [];
+    const dirs = await fs.readdir(STORAGE_DIR, { withFileTypes: true });
+
+    for (const d of dirs) {
+      if (!d.isDirectory()) continue;
+      const sessionId = d.name;
+      const baseDir = path.join(STORAGE_DIR, sessionId);
+
+      const files = await fs.readdir(baseDir, { withFileTypes: true });
+      const finals = [];
+
+      for (const f of files) {
+        if (!f.isFile()) continue;
+        if (!f.name.startsWith("final_")) continue; // final_だけ拾う
+
+        const full = path.join(baseDir, f.name);
+        const st = await fs.stat(full);
+
+        finals.push({
+          name: f.name,
+          bytes: st.size,
+          mtime: st.mtimeMs,
+          url: `/storage/${sessionId}/${f.name}`,
+        });
+      }
+
+      // finalファイルがないセッションはスキップでもOK
+      if (finals.length) {
+        // 日付順に並べておく（新しい順）
+        finals.sort((a, b) => b.mtime - a.mtime);
+        sessions.push({ sessionId, finals });
+      }
+    }
+
+    // 全体も新しいセッション順に
+    sessions.sort((a, b) => b.finals[0].mtime - a.finals[0].mtime);
+
+    res.json({ ok: true, sessions });
+  } catch (e) {
+    console.error("[FILES ERROR]", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+
+
 // 任意：セッション終了通知（記録用）
 app.get("/api/commit", async (req, res) => {
   const q = req.query || {};
