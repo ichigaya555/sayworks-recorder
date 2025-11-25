@@ -361,14 +361,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ------------ Stop ------------ */
   $('#stopBtn').onclick = async () => {
-    try{
-      clearTimeout(rollTimer); clearInterval(elapsedTimer);
+    // finalBlob は try の外で宣言しておく
+    let finalBlob = null;
+
+    try {
+      clearTimeout(rollTimer);
+      clearInterval(elapsedTimer);
 
       if (rec && rec.state !== 'inactive') rec.stop();
       stream?.getTracks()?.forEach(t => t.stop());
-      $('#stopBtn').disabled = true; $('#startBtn').disabled = false;
-
-      let finalBlob = null;
+      $('#stopBtn').disabled = true;
+      $('#startBtn').disabled = false;
 
       // 全チャンクをマージ
       if (chunksAll.length) {
@@ -402,7 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 最終ファイルアップロード
         const fn = `final_${sessionId}.${ext}`;
 
-        // ★ オンライン／オフラインで分岐
+        // オンライン／オフラインで分岐
         if (!navigator.onLine) {
           await savePendingFinal(sessionId, ext, finalBlob);
           log('📥 オフラインのためサーバー保存を保留しました（あとで自動アップロードされます）');
@@ -413,7 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
               headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': fn },
               body: await finalBlob.arrayBuffer()
             });
-            const j = await res.json().catch(()=>({ok:false}));
+            const j = await res.json().catch(() => ({ ok: false }));
             if (!j.ok) {
               log('⚠️ final upload失敗。未送信キューに退避します。');
               await savePendingFinal(sessionId, ext, finalBlob);
@@ -427,26 +430,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
+      // ===== 一言判定（±3s以内でOK） =====
+      if (finalBlob) {
+        const expectedSec = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+        const url2 = URL.createObjectURL(finalBlob);
+        const player2 = $('#player');
+        player2.src = url2;
+        await new Promise(r => {
+          player2.onloadedmetadata = r;
+          setTimeout(r, 1000);
+        });
+        let d = player2.duration;
+        if (!Number.isFinite(d) || Number.isNaN(d)) d = 0;
+        const actualSec = Math.round(d);
+        const ok = (actualSec === 0) || Math.abs(actualSec - expectedSec) <= 3;
+        log(ok
+          ? '✅ 録音成功'
+          : `⚠️ 録音に不具合の可能性（expected=${expectedSec}s actual=${actualSec}s）`
+        );
+        try { URL.revokeObjectURL(url2); } catch {}
+      } else {
+        log('⚠️ 最終ファイルが生成されていません（録音時間が極端に短い/無音の可能性）');
       }
 
-      // 一言判定（±3s以内でOK）
-// 一言判定（±3s以内でOK）
-// 一言判定（±3s以内でOK）: expectedは“実測経過秒”、Infinity/NaNは0扱い
-if (finalBlob) {
-  const expectedSec = Math.max(0, Math.round((Date.now() - startTime) / 1000));
-  const url2 = URL.createObjectURL(finalBlob);
-  const player2 = $('#player');
-  player2.src = url2;
-  await new Promise(r => { player2.onloadedmetadata = r; setTimeout(r, 1000); });
-  let d = player2.duration;
-  if (!Number.isFinite(d) || Number.isNaN(d)) d = 0; // Infinity/NaNは未確定→0扱い
-  const actualSec = Math.round(d);
-  const ok = (actualSec === 0) || Math.abs(actualSec - expectedSec) <= 3;
-  log(ok ? '✅ 録音成功' : `⚠️ 録音に不具合の可能性（expected=${expectedSec}s actual=${actualSec}s）`);
-  try { URL.revokeObjectURL(url2); } catch {}
-} else {
-  log('⚠️ 最終ファイルが生成されていません（録音時間が極端に短い/無音の可能性）');
-}
       // 管理向けの品質メモ（任意）
       const q = new URLSearchParams({
         sessionId,
@@ -457,7 +463,7 @@ if (finalBlob) {
         silentEvents: String(silentEvents),
         silentChunks: String(silentChunks)
       }).toString();
-      fetch(`/api/commit?${q}`).catch(()=>{});
+      fetch(`/api/commit?${q}`).catch(() => {});
 
       // 片付け
       chunksAll = [];
@@ -476,6 +482,7 @@ if (finalBlob) {
     try { stopMonitor?.(); } catch {}
     stopMonitor = null;
   };
+
 // ホットスポット -> 既存ボタンを代理クリック
 const carWrap = document.getElementById('carWrap');
 const startBtn = document.getElementById('startBtn');
