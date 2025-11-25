@@ -120,8 +120,8 @@ async function savePendingFinal(sessionId, ext, blob, meta = {}) {
     };
     const req = store.add(data);
     req.onsuccess = () => {
-      console.log('[OFFLINE] saved pending final', req.result);
-      resolve(req.result);
+  log(`💾 OFFLINEキュー保存: id=${req.result} size=${data.size}`);
+  resolve(req.result);
     };
     req.onerror = (e) => reject(e.target.error);
   });
@@ -152,6 +152,7 @@ async function deletePendingFinal(id) {
 }
 
 async function uploadPendingFinalsIfOnline() {
+  log(`🧪 uploadPendingFinalsIfOnline 起動 (online=${navigator.onLine})`);
   if (!navigator.onLine) return;
   const items = await getAllPendingFinals();
   if (!items.length) return;
@@ -185,6 +186,7 @@ async function uploadPendingFinalsIfOnline() {
 
 // オンラインになったときにも自動で試す
 window.addEventListener('online', () => {
+  log(`🔔 online event fired. navigator.onLine=${navigator.onLine}`);
   uploadPendingFinalsIfOnline().catch(console.error);
 });
 
@@ -459,9 +461,17 @@ if (finalBlob) {
 
       // 片付け
       chunksAll = [];
-    }catch(err){
-      log('stop error:', err.message || err);
+    } catch (err) {
+      const msg = String(err?.message || err || '');
+      if (msg.includes('NetworkError') || msg.includes('Failed to fetch')) {
+        // オフライン or 通信エラー時はやさしい文言で
+        log('📡 ネットワーク未接続のためサーバー送信に失敗しました（録音データは端末内に退避済みです）');
+      } else {
+        // それ以外の本当のバグだけ "stop error" として表示
+        log('stop error:', msg);
+      }
     }
+
     // ヘルスモニタ停止
     try { stopMonitor?.(); } catch {}
     stopMonitor = null;
