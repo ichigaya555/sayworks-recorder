@@ -81,6 +81,113 @@ document.addEventListener('visibilitychange', () => {
 const $ = s => document.querySelector(s);
 const log = (...a)=>{ (document.querySelector('#log')||{}).textContent += a.join(' ')+'\n' };
 
+/* ===================== オフライン保存（IndexedDB） ===================== */
+
+const OFFLINE_DB_NAME = 'sayworks-offline';
+const OFFLINE_STORE   = 'pendingFinals';
+
+function openOfflineDb() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      console.warn('IndexedDB not supported');
+      return resolve(null);
+    }
+    const req = indexedDB.open(OFFLINE_DB_NAME, 1);
+    req.onupgradeneeded = (ev) => {
+      const db = ev.target.result;
+      if (!db.objectStoreNames.contains(OFFLINE_STORE)) {
+        db.createObjectStore(OFFLINE_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = (ev) => resolve(ev.target.result);
+    req.onerror  = (ev) => reject(ev.target.error);
+  });
+}
+
+async function savePendingFinal(sessionId, ext, blob, meta = {}) {
+  const db = await openOfflineDb();
+  if (!db) return;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+    const store = tx.objectStore(OFFLINE_STORE);
+    const data = {
+      sessionId,
+      ext,
+      createdAt: Date.now(),
+      size: blob.size,
+      ...meta,
+      blob
+    };
+    const req = store.add(data);
+    req.onsuccess = () => {
+      console.log('[OFFLINE] saved pending final', req.result);
+      resolve(req.result);
+    };
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function getAllPendingFinals() {
+  const db = await openOfflineDb();
+  if (!db) return [];
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readonly');
+    const store = tx.objectStore(OFFLINE_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function deletePendingFinal(id) {
+  const db = await openOfflineDb();
+  if (!db) return;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+    const store = tx.objectStore(OFFLINE_STORE);
+    const req = store.delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function uploadPendingFinalsIfOnline() {
+  if (!navigator.onLine) return;
+  const items = await getAllPendingFinals();
+  if (!items.length) return;
+
+  log(`🌐 オンライン復帰：未送信データ ${items.length} 件のアップロードを試行します…`);
+
+  for (const item of items) {
+    try {
+      const { id, sessionId, ext, blob } = item;
+      const fn = `final_${sessionId}.${ext || 'webm'}`;
+      const res = await fetch(`/api/final?sessionId=${encodeURIComponent(sessionId)}&ext=${ext}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Filename': fn
+        },
+        body: await blob.arrayBuffer()
+      });
+      const j = await res.json().catch(() => ({ ok: false }));
+      if (j.ok) {
+        log(`✅ 未送信データ（id=${id}）をアップロードしました`);
+        await deletePendingFinal(id);
+      } else {
+        log(`⚠️ 未送信データ（id=${id}）のアップロードに失敗しました: ${JSON.stringify(j)}`);
+      }
+    } catch (e) {
+      log(`⚠️ 未送信データのアップロード中にエラー: ${e.message || e}`);
+    }
+  }
+}
+
+// オンラインになったときにも自動で試す
+window.addEventListener('online', () => {
+  uploadPendingFinalsIfOnline().catch(console.error);
+});
+
 /* ===================== 録音設定 ===================== */
 // テスト値：本番は ROLL_MS=900000, CHUNK_MS=10000〜15000 に変更するだけ
 const CHUNK_MS = 5000;     // チャンク間隔
@@ -170,6 +277,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const counters = $('#counters');
   const player = $('#player');
   const updateCounters = () => { counters.textContent = `session=${sessionId || '-'} | roll=${roll} seq=${seq}`; };
+
+  // ← 既存のUI関連初期化のあとどこかでこれを追加
+  uploadPendingFinalsIfOnline().catch(console.error);
 
   /* ------------ Start ------------ */
   $('#startBtn').onclick = async () => {
@@ -262,21 +372,59 @@ document.addEventListener('DOMContentLoaded', () => {
       if (chunksAll.length) {
         finalBlob = new Blob(chunksAll, { type: mime || 'audio/webm' });
 
-        // 再生チェック
-        const url = URL.createObjectURL(finalBlob);
-        player.src = url; player.load();
-        await new Promise(r => { player.onloadedmetadata = r; setTimeout(r, 500); });
-        log('final duration ≈', player.duration, 'sec , size=', finalBlob.size);
+        // ★ 再生できるかどうかを事前にチェック
+        let canPlay = false;
+        if (player && typeof player.canPlayType === 'function') {
+          const t = mime || 'audio/webm';
+          const res = player.canPlayType(t);
+          canPlay = !!res && res !== 'no';
+        }
+
+        if (canPlay) {
+          try {
+            const url = URL.createObjectURL(finalBlob);
+            player.src = url;
+            player.load();
+            await new Promise(r => {
+              player.onloadedmetadata = r;
+              setTimeout(r, 500);
+            });
+            log('final duration ≈', player.duration, 'sec , size=', finalBlob.size);
+          } catch (e) {
+            log('⚠️ 再生チェック中にエラーが発生しました（', e.message || e, '）');
+          }
+        } else {
+          log('ℹ️ この端末ではこの音声形式を再生できないため、再生チェックをスキップしました。');
+        }
 
         // 最終ファイルアップロード
         const fn = `final_${sessionId}.${ext}`;
-        const res = await fetch(`/api/final?sessionId=${encodeURIComponent(sessionId)}&ext=${ext}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': fn },
-          body: await finalBlob.arrayBuffer()
-        });
-        const j = await res.json().catch(()=>({ok:false}));
-        log('final upload:', JSON.stringify(j));
+
+        // ★ オンライン／オフラインで分岐
+        if (!navigator.onLine) {
+          await savePendingFinal(sessionId, ext, finalBlob);
+          log('📥 オフラインのためサーバー保存を保留しました（あとで自動アップロードされます）');
+        } else {
+          try {
+            const res = await fetch(`/api/final?sessionId=${encodeURIComponent(sessionId)}&ext=${ext}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': fn },
+              body: await finalBlob.arrayBuffer()
+            });
+            const j = await res.json().catch(()=>({ok:false}));
+            if (!j.ok) {
+              log('⚠️ final upload失敗。未送信キューに退避します。');
+              await savePendingFinal(sessionId, ext, finalBlob);
+            } else {
+              log('final upload:', JSON.stringify(j));
+            }
+          } catch (e) {
+            log('⚠️ final upload中にエラー。未送信キューに退避します。', e.message || e);
+            await savePendingFinal(sessionId, ext, finalBlob);
+          }
+        }
+      }
+
       }
 
       // 一言判定（±3s以内でOK）
